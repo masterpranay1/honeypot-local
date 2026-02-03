@@ -1,0 +1,85 @@
+Problem Statement 2: AI Agentic Honeypot for Scam Intelligence
+
+Background
+Scam messages (SMS, WhatsApp, Telegram) are rampant. Instead of just blocking them, law enforcement agencies want to gather intelligence. An "AI Honeypot" can pretend to be a victim, engage the scammer, and extract valuable data (UPI IDs, crypto wallets, phone numbers, fake URLs) to report them.
+
+Your Task
+Build an API that acts as this honeypot.
+1. The API receives an incoming message (simulating a scammer).
+2. It detects if the message is a scam.
+3. If it is a scam, an AI agent takes over (e.g., pretending to be a naive user) and generates a reply to keep the scammer hooked.
+4. As the conversation progresses, the agent extracts intelligence (payment details, links).
+5. Finally, the system reports this intelligence back to a central endpoint.
+
+Key Requirements
+1. Scam Detection: Use an LLM or classification logic to decide if the message is a scam.
+2. Agent Persona: The AI should act like a realistic victim (e.g., elderly person, greedy investor) to prolong the chat.
+3. Intelligence Extraction: Identify and save:
+   - UPI IDs (e.g., scammer@upi)
+   - Crypto Wallet Addresses
+   - Phishing Links
+   - Phone Numbers
+4. Final Reporting: Send the gathered data to the provided GUVI API endpoint.
+
+Deliverable Endpoint
+You must expose a POST endpoint (e.g., /chat or /webhook).
+GUVI’s system will send messages to your endpoint to test your agent.
+
+Reporting API (To be called by your system)
+URL: https://hackathon.guvi.in/api/updateHoneyPotFinalResult
+Method: POST
+Headers: Content-Type: application/json
+
+Payload Schema:
+{
+  "scammerId": "string (The sender's phone number or ID)",
+  "scamType": "string (e.g. Financial, Crypto, Job Scam)",
+  "evidence": {
+    "chatHistory": [
+      { "role": "scammer", "content": "..." },
+      { "role": "agent", "content": "..." }
+    ],
+    "extractedIntelligence": {
+      "upi": ["..."],
+      "crypto": ["..."],
+      "urls": ["..."]
+    },
+    "agentNotes": "string (Brief summary of what happened)"
+  }
+}
+
+Sample Python Snippet (Concept)
+# This is just logic flow, adapt to your framework (FastAPI/Flask/Django)
+
+def handle_incoming_message(scammer_msg, scammer_id):
+    # 1. Detect Scam
+    if not is_scam(scammer_msg):
+        return "Message ignored."
+
+    # 2. Agent Generates Reply
+    history = load_history(scammer_id)
+    agent_reply = llm_agent.generate_reply(history, scammer_msg)
+    save_history(scammer_id, scammer_msg, agent_reply)
+
+    # 3. Extract Intel
+    intelligence_dict = extract_intel(scammer_msg) 
+    
+    # 4. Report (If intelligence found or conversation ends)
+    if intelligence_dict:
+        payload = {
+            "scammerId": scammer_id,
+            "scamType": "Financial",
+            "evidence": {
+                "chatHistory": history,
+                "extractedIntelligence": intelligence_dict,
+                "agentNotes": agent_notes
+            }
+        }
+        response = requests.post(
+            "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
+            json=payload,
+            timeout=5
+        )
+
+🧾 Updated One-Line Summary
+Build an AI-powered agentic honeypot API that detects scam messages, engages scammers in multi-turn conversations, extracts intelligence, and reports the final result back to the GUVI evaluation endpoint.

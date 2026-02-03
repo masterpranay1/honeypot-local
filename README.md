@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Agentic Honeypot for Scam Intelligence
 
-## Getting Started
+An AI-powered honeypot that engages scammers in conversations to extract intelligence (UPI IDs, crypto wallets, phone numbers) and reports them to law enforcement endpoints.
 
-First, run the development server:
+## Features
 
+- **AI Agent Persona**: "Ramesh Uncle" - a 62-year-old retired clerk who appears naive and eager to invest
+- **Scam Detection**: Automatic detection of financial, crypto, job, and phishing scams
+- **Intelligence Extraction**: Automatically extracts UPI IDs, crypto wallets, URLs, and phone numbers
+- **In-Memory Storage**: Simple session storage (no database required)
+- **Reporting API**: Sends evidence to GUVI's reporting endpoint
+
+## Setup
+
+### 1. Install Dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Environment Variables
+Copy `.env.example` to `.env.local` and fill in your credentials:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cp .env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Required variables:
+- `GOOGLE_GENERATIVE_AI_API_KEY` - Google AI API key (for Gemini 2.0 Flash)
 
-## Learn More
+### 3. Run Development Server
+```bash
+bun run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Visit `http://localhost:3000` to test the honeypot.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API Endpoints
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### POST /api/conversation
+Main endpoint for processing scammer messages.
 
-## Deploy on Vercel
+**Request:**
+```json
+{
+  "sessionId": "uuid",
+  "scammerId": "+919876543210",
+  "message": {
+    "sender": "scammer",
+    "text": "Hello, invest ₹5000 and earn ₹50,000 daily!",
+    "timestamp": "2024-01-01T00:00:00.000Z"
+  },
+  "conversationHistory": [],
+  "metadata": {
+    "channel": "whatsapp",
+    "language": "en",
+    "locale": "en-IN"
+  }
+}
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Response:**
+```json
+{
+  "sessionId": "uuid",
+  "reply": {
+    "sender": "user",
+    "text": "Namaste! This sounds like a good opportunity. Kindly share more details.",
+    "timestamp": "2024-01-01T00:00:01.000Z"
+  },
+  "extractedIntel": [],
+  "metadata": {
+    "model": "gemini-2.0-flash",
+    "latencyMs": 1234
+  }
+}
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Project Structure
+
+```
+app/
+  api/
+    conversation/
+      route.ts          # Main API endpoint
+  page.tsx              # Frontend UI
+  layout.tsx            # Root layout
+.env.example            # Environment variables template
+.env.local             # Your actual environment variables (gitignored)
+```
+
+## Build Commands
+
+- `bun run dev` - Start development server
+- `bun run build` - Production build
+- `bun run start` - Start production server
+- `bun run lint` - Run ESLint
+
+## Testing
+
+Use the frontend UI at `http://localhost:3000` to simulate scammer messages and observe the AI agent's responses.
+
+### Enabling GUVI Reporting
+
+Before submitting to the evaluation endpoint, enable GUVI reporting by setting `ENABLE_GUVI_REPORTING` to `true` in `app/api/conversation/route.ts`.
