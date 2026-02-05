@@ -52,7 +52,9 @@ Examples of how you should type:
 - "if net fails can i call you what is number"
 - "can you email details i want show my son"
 
-Remember: You are REAL HUMAN Ramesh Uncle, NOT an AI system!`;
+Remember: You are REAL HUMAN Ramesh Uncle, NOT an AI system!
+ 
+ Check the ENTIRE conversation history for any previously missed payment details, UPI IDs, bank accounts, or scam indicators. Extract everything you find.`;
 
 const extractIntelTool = tool({
   description:
@@ -223,13 +225,17 @@ async function reportToGuvi(
   }
 }
 
-async function detectScam(messageText: string): Promise<{
+async function detectScam(messages: Message[]): Promise<{
   isScam: boolean;
   scamType: string;
   confidence: number;
   reasoning: string;
 }> {
-  const scamDetectionPrompt = `You are a scam detection expert. Analyze the following message for scam indicators.
+  const conversationText = messages
+    .map((m) => `${m.sender.toUpperCase()}: ${m.text}`)
+    .join("\n");
+
+  const scamDetectionPrompt = `You are a scam detection expert. Analyze the following conversation for scam indicators.
 
 Check for:
 1. Financial scams (investment offers, quick money schemes, lottery winnings, inheritance claims)
@@ -237,7 +243,8 @@ Check for:
 3. Job scams (fake job offers, work-from-home schemes, recruitment fees)
 4. Phishing attempts (requests for personal information, suspicious links, fake verification)
 
-Message to analyze: "${messageText}"
+Conversation to analyze:
+${conversationText}
 
 Return a JSON response with these fields:
 - isScam: boolean (true if scam detected)
@@ -279,7 +286,7 @@ Be thorough but decisive - if it seems suspicious, mark it as a scam. Only retur
 export async function POST(request: Request): Promise<Response> {
   try {
     const body: RequestBody = await request.json();
-    const { sessionId, scammerId, message } = body;
+    const { sessionId, scammerId, message, conversationHistory } = body;
 
     if (!sessionId || !message?.text) {
       return Response.json(
@@ -288,15 +295,26 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
-    const scamDetection = await detectScam(message.text);
-
     let session = getSession(sessionId);
     if (!session) {
-      session = createSession(sessionId, scammerId, scamDetection.scamType);
-      session.isScam = scamDetection.isScam;
+      session = createSession(sessionId, scammerId, "none");
+    }
+
+    // If conversation history is provided, verify/update session messages
+    if (conversationHistory && conversationHistory.length > 0) {
+      // We trust the client's history as the source of truth for this stateless-like interaction
+      // but we should ensure we don't duplicate if we already have it.
+      // For simplicity in this context, we'll assume the client provides the *past* history.
+      // We will replace our local knowledge of history with what the client claims involved,
+      // plus the new message, to ensure we are in sync.
+      session.messages = [...conversationHistory];
     }
 
     session.messages.push(message);
+
+    const scamDetection = await detectScam(session.messages);
+    session.scamType = scamDetection.scamType;
+    session.isScam = scamDetection.isScam;
 
     if (session.messages.length >= MAX_CONVERSATION_MESSAGES) {
       return Response.json({
@@ -325,12 +343,37 @@ export async function POST(request: Request): Promise<Response> {
 
     for (const step of result.steps || []) {
       for (const toolCall of step.toolCalls || []) {
-        if (toolCall.toolName === "extractIntel" && "args" in toolCall) {
-          const args = toolCall.args as { type: string; value: string };
-          extractedIntel.push({
-            type: args.type,
-            value: args.value,
-          });
+        if (toolCall.toolName === "extractIntel") {
+          // @ts-expect-error SDK might return input or args depending on version/provider
+          const args = toolCall.args || toolCall.input;
+          if (args) {
+            extractedIntel.push({
+              type: args.type,
+              value: args.value,
+            });
+          }
+        }
+      }
+    }
+
+    // Also check top-level toolCalls (fallback/redundancy check)
+    if (result.toolCalls) {
+      for (const toolCall of result.toolCalls) {
+        if (toolCall.toolName === "extractIntel") {
+          // @ts-expect-error SDK might return input or args depending on version/provider
+          const args = toolCall.args || toolCall.input;
+          if (args) {
+            // Avoid duplicates if already extracted from steps
+            const alreadyExists = extractedIntel.some(
+              (e) => e.type === args.type && e.value === args.value,
+            );
+            if (!alreadyExists) {
+              extractedIntel.push({
+                type: args.type,
+                value: args.value,
+              });
+            }
+          }
         }
       }
     }
