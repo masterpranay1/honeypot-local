@@ -12,6 +12,7 @@ type SessionData = {
   messages: Message[];
   extractedIntel: Array<{ type: string; value: string }>;
   scammerId?: string;
+  isScam?: boolean;
   scamType?: string;
   createdAt: Date;
 };
@@ -57,7 +58,16 @@ const extractIntelTool = tool({
   description:
     "Extract and save scammer payment identifiers (UPI IDs, crypto wallets, URLs, phone numbers)",
   inputSchema: z.object({
-    type: z.enum(["upi", "btc", "eth", "url", "phone", "other"]),
+    type: z.enum([
+      "upi",
+      "btc",
+      "eth",
+      "url",
+      "phone",
+      "bank_account",
+      "suspicious_keyword",
+      "other",
+    ]),
     value: z.string(),
   }),
   execute: async (input: { type: string; value: string }) => {
@@ -69,7 +79,7 @@ const extractIntelTool = tool({
 type Message = {
   sender: "scammer" | "user";
   text: string;
-  timestamp: string;
+  timestamp: number;
 };
 
 type AIMessage = {
@@ -104,8 +114,21 @@ type RequestBody = {
 };
 
 type ResponseBody = {
-  status: string;
+  sessionId: string;
+  scamDetected: boolean;
+  totalMessagesExchanged: number;
+  extractedIntelligence: {
+    bankAccounts: string[];
+    upiIds: string[];
+    phishingLinks: string[];
+    phoneNumbers: string[];
+    suspiciousKeywords: string[];
+    cryptoWallets: string[];
+    other: string[];
+  };
+  agentNotes: string;
   reply: string;
+  status: string;
 };
 
 function getSession(sessionId: string): SessionData | undefined {
@@ -122,6 +145,7 @@ function createSession(
     extractedIntel: [],
     scammerId,
     scamType,
+    isScam: !!scamType && scamType !== "none",
     createdAt: new Date(),
   };
   sessions.set(sessionId, sessionData);
@@ -269,6 +293,7 @@ export async function POST(request: Request): Promise<Response> {
     let session = getSession(sessionId);
     if (!session) {
       session = createSession(sessionId, scammerId, scamDetection.scamType);
+      session.isScam = scamDetection.isScam;
     }
 
     session.messages.push(message);
@@ -326,7 +351,7 @@ export async function POST(request: Request): Promise<Response> {
     const agentMessage: Message = {
       sender: "user",
       text: replyText,
-      timestamp: new Date().toISOString(),
+      timestamp: Date.now(),
     };
     session.messages.push(agentMessage);
 
@@ -352,7 +377,53 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    // Aggregate extracted intelligence
+    const intelData = {
+      bankAccounts: [] as string[],
+      upiIds: [] as string[],
+      phishingLinks: [] as string[],
+      phoneNumbers: [] as string[],
+      suspiciousKeywords: [] as string[],
+      cryptoWallets: [] as string[],
+      other: [] as string[],
+    };
+
+    for (const intel of session.extractedIntel) {
+      switch (intel.type) {
+        case "bank_account":
+          intelData.bankAccounts.push(intel.value);
+          break;
+        case "upi":
+          intelData.upiIds.push(intel.value);
+          break;
+        case "url":
+          intelData.phishingLinks.push(intel.value);
+          break;
+        case "phone":
+          intelData.phoneNumbers.push(intel.value);
+          break;
+        case "suspicious_keyword":
+          intelData.suspiciousKeywords.push(intel.value);
+          break;
+        case "btc":
+        case "eth":
+          intelData.cryptoWallets.push(`${intel.type}:${intel.value}`);
+          break;
+        default:
+          intelData.other.push(intel.value);
+      }
+    }
+
+    const agentNotes = `Agent engaged in ${
+      session.messages.length
+    } messages. Detected scam: ${session.isScam ? "Yes" : "No"}.`;
+
     const response: ResponseBody = {
+      sessionId,
+      scamDetected: session.isScam || false,
+      totalMessagesExchanged: session.messages.length,
+      extractedIntelligence: intelData,
+      agentNotes,
       status: "success",
       reply: replyText,
     };
