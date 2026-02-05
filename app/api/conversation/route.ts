@@ -5,7 +5,7 @@ import { z } from "zod";
 const GUVI_REPORT_URL =
   "https://hackathon.guvi.in/api/updateHoneyPotFinalResult";
 const REPORTING_THRESHOLD = 10;
-const ENABLE_GUVI_REPORTING = false;
+const ENABLE_GUVI_REPORTING = true;
 const MAX_CONVERSATION_MESSAGES = 20;
 
 type SessionData = {
@@ -154,76 +154,7 @@ function createSession(
   return sessionData;
 }
 
-async function reportToGuvi(
-  scammerId: string,
-  conversationHistory: Message[],
-  extractedIntel: Array<{ type: string; value: string }>,
-  agentReply: string,
-  scamType: string = "Financial",
-): Promise<void> {
-  const upi: string[] = [];
-  const crypto: string[] = [];
-  const urls: string[] = [];
-
-  for (const intel of extractedIntel) {
-    if (intel.type === "upi") {
-      upi.push(intel.value);
-    } else if (intel.type === "btc" || intel.type === "eth") {
-      crypto.push(`${intel.type}:${intel.value}`);
-    } else if (intel.type === "url") {
-      urls.push(intel.value);
-    }
-  }
-
-  const chatHistory = conversationHistory.map(
-    (msg): { role: "scammer" | "agent"; content: string } => ({
-      role: msg.sender === "scammer" ? "scammer" : "agent",
-      content: msg.text,
-    }),
-  );
-
-  chatHistory.push({
-    role: "agent",
-    content: agentReply,
-  });
-
-  const agentNotes = `Agent engaged in ${conversationHistory.length + 1} turns. Extracted: ${upi.length} UPI IDs, ${crypto.length} crypto wallets, ${urls.length} URLs.`;
-
-  const payload: GuviPayload = {
-    scammerId,
-    scamType,
-    evidence: {
-      chatHistory,
-      extractedIntelligence: {
-        upi,
-        crypto,
-        urls,
-      },
-      agentNotes,
-    },
-  };
-
-  try {
-    const response = await fetch(GUVI_REPORT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      console.error(
-        `[GUVI Report Failed] Status: ${response.status}`,
-        await response.text(),
-      );
-    } else {
-      console.log(`[GUVI Report Success] Reported scammer ${scammerId}`);
-    }
-  } catch (error) {
-    console.error("[GUVI Report Error]", error);
-  }
-}
+// function reportToGuvi removed
 
 async function detectScam(messages: Message[]): Promise<{
   isScam: boolean;
@@ -284,6 +215,11 @@ Be thorough but decisive - if it seems suspicious, mark it as a scam. Only retur
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const apiKey = request.headers.get("x-api-key");
+  if (apiKey !== process.env.API_KEY) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body: RequestBody = await request.json();
     const { sessionId, scammerId, message, conversationHistory } = body;
@@ -315,14 +251,6 @@ export async function POST(request: Request): Promise<Response> {
     const scamDetection = await detectScam(session.messages);
     session.scamType = scamDetection.scamType;
     session.isScam = scamDetection.isScam;
-
-    if (session.messages.length >= MAX_CONVERSATION_MESSAGES) {
-      return Response.json({
-        status: "success",
-        reply:
-          "sorry my phone battery dying cannot talk more talk later good day",
-      });
-    }
 
     const history: AIMessage[] = session.messages.map((msg) => ({
       role: msg.sender === "scammer" ? "user" : "assistant",
@@ -398,28 +326,6 @@ export async function POST(request: Request): Promise<Response> {
     };
     session.messages.push(agentMessage);
 
-    const shouldReport =
-      extractedIntel.length > 0 ||
-      session.messages.length >= REPORTING_THRESHOLD;
-
-    if (shouldReport && scammerId && ENABLE_GUVI_REPORTING) {
-      const scamTypeMap: Record<string, string> = {
-        financial: "Financial",
-        crypto: "Crypto",
-        job: "Job Scam",
-        phishing: "Phishing",
-      };
-      const reportScamType = scamTypeMap[scamDetection.scamType] || "Financial";
-
-      await reportToGuvi(
-        scammerId,
-        session.messages,
-        session.extractedIntel,
-        replyText,
-        reportScamType,
-      );
-    }
-
     // Aggregate extracted intelligence
     const intelData = {
       bankAccounts: [] as string[],
@@ -460,6 +366,44 @@ export async function POST(request: Request): Promise<Response> {
     const agentNotes = `Agent engaged in ${
       session.messages.length
     } messages. Detected scam: ${session.isScam ? "Yes" : "No"}.`;
+
+    // Immediate Reporting Logic
+    if (scamDetection.isScam && ENABLE_GUVI_REPORTING) {
+      // Send report to GUVI
+      const payload = {
+        sessionId,
+        scamDetected: true,
+        totalMessagesExchanged: session.messages.length,
+        extractedIntelligence: intelData,
+        agentNotes:
+          agentNotes +
+          (scamDetection.reasoning
+            ? ` Reasoning: ${scamDetection.reasoning}`
+            : ""),
+      };
+
+      // We run this without awaiting to not block the response, or await if strict reliability is needed.
+      // Given "mandatory" and "final result", awaiting is safer to ensure it sends.
+      try {
+        console.log(
+          `[GUVI Reporting] Sending report for session ${sessionId}...`,
+        );
+        const reportRes = await fetch(GUVI_REPORT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!reportRes.ok) {
+          console.error(
+            `[GUVI Report Failed] ${reportRes.status} ${await reportRes.text()}`,
+          );
+        } else {
+          console.log(`[GUVI Report Success]`);
+        }
+      } catch (e) {
+        console.error(`[GUVI Report Error]`, e);
+      }
+    }
 
     const response: ResponseBody = {
       sessionId,
